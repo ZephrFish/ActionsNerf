@@ -1,0 +1,191 @@
+name: Unified Chaos Engine
+
+on:
+  push:
+    branches: [main, master]
+  schedule:
+    # Daily history wipe at midnight UTC
+    - cron: '0 0 * * *'
+    # Hourly random commits
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Operation type'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - wipe_only
+          - commit_only
+          - cleanup_only
+
+permissions:
+  contents: write
+  actions: write
+  packages: write
+
+jobs:
+  random-commit:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' && contains(github.event.schedule, '0 * * * *') || github.event.inputs.operation == 'commit_only' || github.event.inputs.operation == 'all'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Generate random identity
+        id: identity
+        run: |
+          NAMES=("Ghost" "Phantom" "Shadow" "Specter" "Wraith" "Spirit" "Shade" "Revenant" "Apparition" "Poltergeist")
+          DOMAINS=("ghost.local" "phantom.local" "shadow.local" "specter.local" "wraith.local" "spirit.local" "void.local" "null.local" "dark.local" "stealth.local")
+          FILES=("data.txt" "log.txt" "status.txt" "info.txt" "random.txt")
+          
+          NAME_INDEX=$((RANDOM % ${#NAMES[@]}))
+          DOMAIN_INDEX=$((RANDOM % ${#DOMAINS[@]}))
+          FILE_INDEX=$((RANDOM % ${#FILES[@]}))
+          
+          RANDOM_NAME="${NAMES[$NAME_INDEX]}"
+          RANDOM_EMAIL="${NAMES[$NAME_INDEX],,}@${DOMAINS[$DOMAIN_INDEX]}"
+          TARGET_FILE="${FILES[$FILE_INDEX]}"
+          
+          echo "name=$RANDOM_NAME" >> $GITHUB_OUTPUT
+          echo "email=$RANDOM_EMAIL" >> $GITHUB_OUTPUT
+          echo "target_file=$TARGET_FILE" >> $GITHUB_OUTPUT
+      
+      - name: Configure Git
+        run: |
+          git config user.name "${{ steps.identity.outputs.name }}"
+          git config user.email "${{ steps.identity.outputs.email }}"
+      
+      - name: Make random changes
+        run: |
+          TARGET_FILE="${{ steps.identity.outputs.target_file }}"
+          RANDOM_HASH=$(openssl rand -hex 16)
+          
+          echo "Timestamp: $(date +%s)" > "$TARGET_FILE"
+          echo "Hash: $RANDOM_HASH" >> "$TARGET_FILE"
+          
+          if [ $((RANDOM % 3)) -eq 0 ]; then
+            echo "$RANDOM_HASH" > ".ghost_$(date +%s)"
+          fi
+      
+      - name: Commit changes
+        run: |
+          git add -A
+          
+          MESSAGES=("Update configuration" "Fix minor issues" "Optimize performance" "Refactor code" "Update dependencies" "Clean up files" "Improve stability" "Add features" "Security update" "Maintenance commit")
+          MSG_INDEX=$((RANDOM % ${#MESSAGES[@]}))
+          
+          GIT_AUTHOR_NAME="${{ steps.identity.outputs.name }}" \
+          GIT_AUTHOR_EMAIL="${{ steps.identity.outputs.email }}" \
+          GIT_COMMITTER_NAME="${{ steps.identity.outputs.name }}" \
+          GIT_COMMITTER_EMAIL="${{ steps.identity.outputs.email }}" \
+          git commit -m "${MESSAGES[$MSG_INDEX]}" || echo "No changes"
+      
+      - name: Push changes
+        run: git push origin main || echo "Nothing to push"
+
+  history-wipe:
+    runs-on: ubuntu-latest
+    if: always() && (github.event_name == 'push' || (github.event_name == 'schedule' && contains(github.event.schedule, '0 0 * * *')) || github.event.inputs.operation == 'wipe_only' || github.event.inputs.operation == 'all')
+    needs: [random-commit]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Generate random identity and date
+        id: identity
+        run: |
+          NAMES=("Ghost" "Phantom" "Shadow" "Specter" "Wraith" "Spirit" "Shade" "Revenant" "Apparition" "Poltergeist")
+          DOMAINS=("ghost.local" "phantom.local" "shadow.local" "specter.local" "wraith.local" "spirit.local" "void.local" "null.local" "dark.local" "stealth.local")
+          
+          NAME_INDEX=$((RANDOM % ${#NAMES[@]}))
+          DOMAIN_INDEX=$((RANDOM % ${#DOMAINS[@]}))
+          
+          RANDOM_NAME="${NAMES[$NAME_INDEX]}"
+          RANDOM_EMAIL="${NAMES[$NAME_INDEX],,}@${DOMAINS[$DOMAIN_INDEX]}"
+          
+          # Generate random date between 1970 and 1999
+          YEAR=$((1970 + RANDOM % 30))
+          MONTH=$(printf "%02d" $((1 + RANDOM % 12)))
+          DAY=$(printf "%02d" $((1 + RANDOM % 28)))
+          HOUR=$(printf "%02d" $((RANDOM % 24)))
+          MINUTE=$(printf "%02d" $((RANDOM % 60)))
+          SECOND=$(printf "%02d" $((RANDOM % 60)))
+          
+          RANDOM_DATE="${YEAR}-${MONTH}-${DAY}T${HOUR}:${MINUTE}:${SECOND}"
+          
+          echo "name=$RANDOM_NAME" >> $GITHUB_OUTPUT
+          echo "email=$RANDOM_EMAIL" >> $GITHUB_OUTPUT
+          echo "date=$RANDOM_DATE" >> $GITHUB_OUTPUT
+      
+      - name: Configure Git
+        run: |
+          git config user.name "${{ steps.identity.outputs.name }}"
+          git config user.email "${{ steps.identity.outputs.email }}"
+      
+      - name: Wipe history and backdate
+        run: |
+          mkdir -p /tmp/backup
+          rsync -av --exclude='.git' . /tmp/backup/
+          
+          git checkout --orphan temp-branch
+          rsync -av /tmp/backup/ .
+          git add -A
+          
+          GIT_AUTHOR_DATE="${{ steps.identity.outputs.date }}" \
+          GIT_COMMITTER_DATE="${{ steps.identity.outputs.date }}" \
+          GIT_AUTHOR_NAME="${{ steps.identity.outputs.name }}" \
+          GIT_AUTHOR_EMAIL="${{ steps.identity.outputs.email }}" \
+          GIT_COMMITTER_NAME="${{ steps.identity.outputs.name }}" \
+          GIT_COMMITTER_EMAIL="${{ steps.identity.outputs.email }}" \
+          git commit -m "Initial commit" --date="${{ steps.identity.outputs.date }}"
+          
+          git branch -D main || git branch -D master || true
+          git branch -m main
+          git push --force origin main
+
+  cleanup-logs:
+    runs-on: ubuntu-latest
+    if: always() && (github.event_name == 'schedule' || github.event.inputs.operation == 'cleanup_only' || github.event.inputs.operation == 'all')
+    needs: [history-wipe]
+    
+    steps:
+      - name: Cleanup workflow runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CURRENT_RUN_ID=${{ github.run_id }}
+          
+          # Delete workflow runs
+          gh api "/repos/${{ github.repository }}/actions/workflows" --jq '.workflows[].id' | while read workflow_id; do
+            page=1
+            while true; do
+              runs=$(gh api "/repos/${{ github.repository }}/actions/workflows/$workflow_id/runs?page=$page&per_page=100" --jq '.workflow_runs[].id')
+              [ -z "$runs" ] && break
+              
+              for run_id in $runs; do
+                [ "$run_id" != "$CURRENT_RUN_ID" ] && gh api -X DELETE "/repos/${{ github.repository }}/actions/runs/$run_id" 2>/dev/null || true
+              done
+              page=$((page + 1))
+            done
+          done
+          
+          # Delete artifacts
+          gh api "/repos/${{ github.repository }}/actions/artifacts" --jq '.artifacts[].id' | while read artifact_id; do
+            gh api -X DELETE "/repos/${{ github.repository }}/actions/artifacts/$artifact_id" 2>/dev/null || true
+          done
+          
+          # Delete caches
+          gh api "/repos/${{ github.repository }}/actions/caches" --jq '.actions_caches[].id' | while read cache_id; do
+            gh api -X DELETE "/repos/${{ github.repository }}/actions/caches/$cache_id" 2>/dev/null || true
+          done
